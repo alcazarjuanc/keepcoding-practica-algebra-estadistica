@@ -1,0 +1,445 @@
+---
+format: html
+editor: visual
+  markdown: 
+    wrap: 72
+---
+
+Vasmos a cargar el dataset de AirBnB descargado de [aquí](https://public.opendatasoft.com/explore/dataset/airbnb-listings/export/?disjunctive.host_verifications&disjunctive.amenities&disjunctive.features&q=Madrid&dataChart=eyJxdWVyaWVzIjpbeyJjaGFydHMiOlt7InR5cGUiOiJjb2x1bW4iLCJmdW5jIjoiQ09VTlQiLCJ5QXhpcyI6Imhvc3RfbGlzdGluZ3NfY291bnQiLCJzY2llbnRpZmljRGlzcGxheSI6dHJ1ZSwiY29sb3IiOiJyYW5nZS1jdXN0b20ifV0sInhBeGlzIjoiY2l0eSIsIm1heHBvaW50cyI6IiIsInRpbWVzY2FsZSI6IiIsInNvcnQiOiIiLCJzZXJpZXNCcmVha2Rvd24iOiJyb29tX3R5cGUiLCJjb25maWciOnsiZGF0YXNldCI6ImFpcmJuYi1saXN0aW5ncyIsIm9wdGlvbnMiOnsiZGlzanVuY3RpdmUuaG9zdF92ZXJpZmljYXRpb25zIjp0cnVlLCJkaXNqdW5jdGl2ZS5hbWVuaXRpZXMiOnRydWUsImRpc2p1bmN0aXZlLmZlYXR1cmVzIjp0cnVlfX19XSwidGltZXNjYWxlIjoiIiwiZGlzcGxheUxlZ2VuZCI6dHJ1ZSwiYWxpZ25Nb250aCI6dHJ1ZX0%3D&location=16,41.38377,2.15774&basemap=jawg.streets)
+
+![](descargar.png)
+
+```{r}
+#Sys.which("make")
+```
+
+```{r}
+#install.packages("tidyverse")
+```
+
+```{r}
+airbnb<-read.csv('airbnb-listings.csv',sep = ';')
+options(repr.plot.height=4,repr.plot.width=6,repr.plot.res = 300)
+```
+
+1.  Vamos a quedarnos con las columnas de mayor interés: 'City','Room.Type','Neighbourhood','Accommodates','Bathrooms','Bedrooms','Beds','Price','Square.Feet','Guests.Included','Extra.People','Review.Scores.Rating','Latitude', 'Longitude' Nos quedarmos solo con las entradas de Madrid para Room.Type=="Entire home/apt" y cuyo barrio (Neighbourhood) no está vacio '' Podemos eliminar las siguientes columnas que ya no son necesarias: "Room.Type",'City' Llama a nuevo dataframe df_madrid.
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+df_madrid <- airbnb %>%
+  select(
+    City, Room.Type, Neighbourhood, Accommodates, Bathrooms, Bedrooms, Beds,
+    Price, Square.Feet, Guests.Included, Extra.People, Review.Scores.Rating,
+    Latitude, Longitude
+  ) %>%
+  filter(
+    City == "Madrid",
+    Room.Type == "Entire home/apt",
+    Neighbourhood != ""
+  ) %>%
+  select(-City, -Room.Type)
+```
+
+```{r}
+names(df_madrid)
+```
+
+------------------------------------------------------------------------
+
+2.  Crea una nueva columna llamada Square.Meters a partir de Square.Feet. Recuerda que un pie cuadrado son 0.092903 metros cuadrados.
+
+    ```{r}
+    df_madrid <- df_madrid %>%
+      mutate(
+        Square.Meters = Square.Feet * 0.092903
+      )
+    ```
+
+    ```{r}
+    names(df_madrid)
+    ```
+
+    ------------------------------------------------------------------------
+
+3.  ¿Que porcentaje de los apartamentos NO muestran los metros cuadrados? Es decir, ¿cuantos tienen NA en Square.Meters?
+
+    ```{r}
+    porcentaje_na <- df_madrid %>%
+      summarize(
+        porcentaje_na = mean(is.na(Square.Meters)) * 100
+      )
+    ```
+
+    ```{r}
+    porcentaje_na
+    ```
+
+------------------------------------------------------------------------
+
+4.  De todos los apartamentos que tienen un valor de metros cuadrados diferente de NA ¿Que porcentaje de los apartamentos tienen 0 metros cuadrados?
+
+    ```{r}
+    porcentaje_cero <- df_madrid %>%
+      filter(!is.na(Square.Meters)) %>%
+      summarize(
+        porcentaje_cero = mean(Square.Meters == 0) * 100
+      )
+    ```
+
+    ```{r}
+    porcentaje_cero
+    ```
+
+------------------------------------------------------------------------
+
+5.  Reemplazar todos los 0m\^2 por NA
+
+    ```{r}
+    df_madrid <- df_madrid %>%
+      mutate(
+        Square.Meters = na_if(Square.Meters, 0)
+      )
+    ```
+
+    ```{r}
+    df_madrid %>%
+      summarize(
+        ceros_restantes = sum(Square.Meters == 0, na.rm = TRUE),
+        total_na = sum(is.na(Square.Meters))
+      )
+    ```
+
+------------------------------------------------------------------------
+
+Hay muchos NAs, vamos a intentar crear un modelo que nos prediga cuantos son los metros cuadrados en función del resto de variables para tratar de rellenar esos NA. Pero **antes de crear el modelo** vamos a hacer: \* pintar el histograma de los metros cuadrados y ver si tenemos que filtrar algún elemento más. \* crear una variable sintética nueva basada en la similitud entre barrios que usaremos en nuestro modelo.
+
+6.  Pinta el histograma de los metros cuadrados y ver si tenemos que filtrar algún elemento más
+
+    ```{r}
+
+    df_madrid %>%
+      filter(!is.na(Square.Meters)) %>%
+      ggplot(aes(x = Square.Meters)) +
+      geom_histogram(
+        binwidth = 10,
+        fill = "steelblue",
+        color = "white"
+      ) +
+      labs(
+        title = "Histograma de metros cuadrados",
+        x = "Metros cuadrados",
+        y = "Número de apartamentos"
+      )
+    ```
+
+    El histograma de los metros cuadrados muestra una fuerte concentración de apartamentos por debajo de los 100 m², con una cola larga hacia valores elevados. Se observan algunos valores extremadamente grandes que podrían corresponder a casos atípicos o errores de registro, por lo que sería conveniente considerar su filtrado antes de entrenar el modelo.
+
+------------------------------------------------------------------------
+
+7.  Asigna el valor NA a la columna Square.Meters de los apartamentos que tengan menos de 20 m\^2
+
+    ```{r}
+    df_madrid <- df_madrid %>%
+      mutate(
+        Square.Meters = if_else(
+          Square.Meters < 20,
+          NA_real_,
+          Square.Meters
+        )
+      )
+    ```
+
+    ```{r}
+    df_madrid %>%
+      summarize(
+        valores_menores_20 = sum(Square.Meters < 20, na.rm = TRUE),
+        total_na = sum(is.na(Square.Meters))
+      )
+    ```
+
+------------------------------------------------------------------------
+
+8.  Existen varios Barrios que todas sus entradas de Square.Meters son NA, vamos a eliminar del dataset todos los pisos que pertenecen a estos barrios.
+
+    ```{r}
+    df_madrid <- df_madrid %>%
+      group_by(Neighbourhood) %>%
+      filter(any(!is.na(Square.Meters))) %>%
+      ungroup()
+    ```
+
+    ```{r}
+    df_madrid %>%
+      group_by(Neighbourhood) %>%
+      summarize(
+        todos_na = all(is.na(Square.Meters))
+      ) %>%
+      filter(todos_na)
+    ```
+
+    ------------------------------------------------------------------------
+
+9.  ¿Tienen todos los barrios los mismos metros cuadrados de media? ¿Con que test lo comprobarías?
+
+    Para comprobar si todos los barrios tienen la misma media de metros cuadrados se utilizaría un ANOVA, donde la variable dependiente sería Square.meters y la variable independiente el barrio (Neighbourhood). Este test permite contrastar si existen diferencias significativas entre las medias de más de dos grupos. En caso de encontrar diferencias globales significativas, podría complementarse con un test post-hoc de Tukey para analizar las diferencias entre barrios de forma pareada.
+
+10. Vamos a agrupar los barrios por metros cuadrados. Podemos usar una matriz de similaridad de Tukey. Muestra como de similares o diferentes son los barrios si nos fijámos únicamente en los metros cuadrados de los pisos. ¿Como se diferencia la media del Barrio A al Barrio B? (Es decir, cual sería el pvalor suponiendo una H0 en la que las medias son iguales)
+
+    ```{r}
+    modelo_anova <- aov(
+      Square.Meters ~ Neighbourhood,
+      data = df_madrid
+    )
+    ```
+
+    ```{r}
+    tukey_tbl <- TukeyHSD(modelo_anova)$Neighbourhood %>%
+      as.data.frame() %>%
+      rownames_to_column("comparacion") %>%
+      separate(comparacion, into = c("Barrio_A", "Barrio_B"), sep = "-") %>%
+      select(Barrio_A, Barrio_B, p_valor = `p adj`)
+    ```
+
+    ```{r}
+    tukey_tbl
+    ```
+
+------------------------------------------------------------------------
+
+11. En el punto anterior has creado una matriz de p-valores que indica como de parecidos son dos barrios. Si su pvalor es bajo significa que los barrios son diferentes, si es alto significa que los barrios se parecen. Esta matriz la podemos usar como matriz de distancia si restamos el pvalor a 1. Es decir si usamos como distancia 1-pvalor. De esta forma barrios con un pvalor alto tendrán una distancia mayor que aquellos con un pvalor bajo. Usando esta última métrica como matriz de distancias dibuja un dendrograma de los diferentes barrios.
+
+    ```{r}
+    barrios <- df_madrid %>% distinct(Neighbourhood) %>% pull()
+    ```
+
+    ```{r}
+    p_matrix <- tukey_tbl %>%
+      bind_rows(
+        tukey_tbl %>% transmute(Barrio_A = Barrio_B, Barrio_B = Barrio_A, p_valor),
+        tibble(Barrio_A = barrios, Barrio_B = barrios, p_valor = 1)
+      ) %>%
+      distinct(Barrio_A, Barrio_B, .keep_all = TRUE) %>%
+      pivot_wider(names_from = Barrio_B, values_from = p_valor) %>%
+      column_to_rownames("Barrio_A") %>%
+      as.matrix()
+    ```
+
+    ```{r}
+    dist_matrix <- 1 - p_matrix
+    dist_matrix[is.na(dist_matrix)] <- 1
+    ```
+
+    ```{r}
+    dist_obj <- as.dist(dist_matrix)
+    ```
+
+    ```{r}
+    any(is.na(dist_matrix))
+    ```
+
+    ```{r}
+    sum(is.na(dist_matrix))
+    ```
+
+    ```{r}
+    hc <- hclust(dist_obj, method = "average")
+    ```
+
+    ```{r}
+    plot(
+      hc,
+      main = "Dendrograma de barrios (distancia = 1 - pvalor de Tukey)",
+      xlab = "",
+      sub = "",
+      cex = 0.7
+    )
+    ```
+
+------------------------------------------------------------------------
+
+12. ¿Que punto de corte sería el aconsejable?, ¿cuantos clusters aparecen?
+
+    Observando el dendrograma, se aprecia un salto importante en la altura alrededor de 0.3–0.4, así como una separación clara del barrio Acacias a alturas superiores. Por ello, un punto de corte razonable seria alrededor de 0.3, lo que da lugar a tres clusters principales de barrios según la similitud en los metros cuadrados de los apartamentos.
+
+------------------------------------------------------------------------
+
+13. Vamos a crear una nueva columna en el dataframe df_madrid con un nuevo identificador marcado por los clusters obtenidos. Esta columna la llamaremos neighb_id
+
+    ```{r}
+    clusters_neighb <- cutree(hc, k = 3)
+    ```
+
+    ```{r}
+    clusters_tbl <- tibble(
+      Neighbourhood = names(clusters_neighb),
+      neighb_id = clusters_neighb
+    )
+    ```
+
+    ```{r}
+    df_madrid <- df_madrid %>%
+      left_join(clusters_tbl, by = "Neighbourhood")
+    ```
+
+    ```{r}
+    table(df_madrid$neighb_id)
+    ```
+
+    ```{r}
+    df_madrid %>%
+      distinct(Neighbourhood, neighb_id) %>%
+      arrange(neighb_id)
+    ```
+
+    ```{r}
+    df_madrid %>%
+      distinct(Neighbourhood, neighb_id) %>%
+      count(neighb_id, sort = TRUE)
+    ```
+
+    ```{r}
+    df_madrid %>%
+      distinct(Neighbourhood, neighb_id) %>%
+      filter(neighb_id == 3)
+    ```
+
+------------------------------------------------------------------------
+
+14. Vamos a crear dos grupos, uno test y otro train.
+
+    ```{r}
+    set.seed(123)
+
+    df_madrid <- df_madrid %>%
+      mutate(split = runif(n()))
+    ```
+
+    ```{r}
+    train <- df_madrid %>% filter(split <= 0.7)
+    test  <- df_madrid %>% filter(split > 0.7)
+    ```
+
+    ```{r}
+    nrow(train)
+    nrow(test)
+
+    nrow(train) / nrow(df_madrid)
+    ```
+
+------------------------------------------------------------------------
+
+15. Tratamos de predecir los metros cuadrados en función del resto de columnas del dataframe.
+
+    ```{r}
+    train_model <- train %>%
+      filter(!is.na(Square.Meters))
+    ```
+
+    ```{r}
+    model_lm <- lm(
+      Square.Meters ~ Accommodates + Bathrooms + Bedrooms + Beds + neighb_id,
+      data = train_model
+    )
+    ```
+
+    ```{r}
+    summary(model_lm)
+    ```
+
+------------------------------------------------------------------------
+
+16. Evaluar la calidad de vuestro modelo
+
+    ```{r}
+    test_model <- test %>%
+      filter(!is.na(Square.Meters))
+    ```
+
+    ```{r}
+    test_model <- test_model %>%
+      mutate(
+        Square_Meters_pred = predict(model_lm, newdata = test_model)
+      )
+    ```
+
+    ```{r}
+    mae <- mean(abs(
+      test_model$Square.Meters - test_model$Square_Meters_pred
+    ))
+
+    mae
+    ```
+
+------------------------------------------------------------------------
+
+17. Si tuvieramos un anuncio de un apartamento para 6 personas (Accommodates), con 1 baño, con un precio de 80€/noche y 3 habitaciones en el barrio de Sol, con 3 camas y un review de 80. ¿Cuantos metros cuadrados tendría? Si tu modelo necesita algúna variable adicional puedes inventartela dentro del rango de valores del dataset. ¿Como varía sus metros cuadrados con cada habitación adicional?
+
+    Utilizando el modelo de regresión lineal ajustado, un apartamento en el barrio de Sol con capacidad para 6 personas, 1 baño, 3 habitaciones y 3 camas tendría aproximadamente 100 m². Según el modelo, cada habitación adicional incrementa el tamaño del apartamento en torno a 24 m², manteniendo constantes el resto de variables.
+
+    ```{r}
+    df_madrid %>%
+      distinct(Neighbourhood, neighb_id) %>%
+      filter(Neighbourhood == "Sol")
+    ```
+
+    ```{r}
+    nuevo_apto <- tibble(
+      Accommodates = 6,
+      Bathrooms    = 1,
+      Bedrooms     = 3,
+      Beds         = 3,
+      neighb_id    = 2
+    )
+    ```
+
+    ```{r}
+    predict(model_lm, newdata = nuevo_apto)
+    ```
+
+    ```{r}
+    nuevo_apto_4 <- nuevo_apto %>%
+      mutate(Bedrooms = 4)
+
+    predict(model_lm, newdata = nuevo_apto_4)
+    ```
+
+------------------------------------------------------------------------
+
+18. Rellenar los Square.Meters con valor NA con el estimado con el modelo anterior.
+
+    Tras la imputación mediante el modelo de regresión, permanecen 21 observaciones con valores NA en Square.Meters debido a la ausencia de información en alguna de las variables explicativas necesarias para realizar la predicción.
+
+    ```{r}
+    sum(is.na(df_madrid$Square.Meters))
+    ```
+
+    ```{r}
+    df_madrid <- df_madrid %>%
+      mutate(
+        Square_Meters_pred = ifelse(
+          is.na(Square.Meters),
+          predict(model_lm, newdata = df_madrid),
+          NA
+        )
+      )
+    ```
+
+    ```{r}
+    df_madrid <- df_madrid %>%
+      mutate(
+        Square.Meters = ifelse(
+          is.na(Square.Meters),
+          Square_Meters_pred,
+          Square.Meters
+        )
+      )
+    ```
+
+    ```{r}
+    sum(is.na(df_madrid$Square.Meters))
+    ```
+
+------------------------------------------------------------------------
